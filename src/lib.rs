@@ -1,7 +1,7 @@
 use bevy::{asset::LoadedUntypedAsset, ecs::template::TemplateContext, prelude::*};
 
 pub mod prelude {
-    pub use crate::{AssetManifest, AssetsLoaded, PreloadPlugin, PreloadSystems};
+    pub use crate::{PreloadManifest, PreloadPlugin, PreloadState, PreloadSystems};
 }
 
 pub struct PreloadPlugin;
@@ -17,16 +17,15 @@ impl Plugin for PreloadPlugin {
 
 fn preload_system(
     mut loader_query: Query<(
-        Entity,
-        Ref<AssetManifest>,
-        &mut LoadingAssets,
-        &mut LoadedAssets,
+        Ref<PreloadManifest>,
+        &mut PreloadState,
+        &mut PreloadingAssets,
+        &mut PreloadedAssets,
     )>,
     loaded_untypeds: Res<Assets<LoadedUntypedAsset>>,
     asset_server: Res<AssetServer>,
-    mut commands: Commands,
 ) {
-    for (entity, manifest, mut loading, mut loaded) in loader_query.iter_mut() {
+    for (manifest, mut state, mut loading, mut loaded) in loader_query.iter_mut() {
         if manifest.is_changed() {
             loading.0 = manifest
                 .0
@@ -34,6 +33,8 @@ fn preload_system(
                 .map(|path| asset_server.load_builder().load_untyped(*path))
                 .collect();
             loaded.0.clear();
+
+            *state = PreloadState::Loading;
         } else if loading.0.is_empty() {
             continue;
         }
@@ -48,7 +49,7 @@ fn preload_system(
         });
 
         if new_loaded.len() > 0 && loading.0.is_empty() {
-            commands.trigger(AssetsLoaded(entity));
+            *state = PreloadState::Loaded;
         }
 
         loaded.0.append(&mut new_loaded);
@@ -58,28 +59,33 @@ fn preload_system(
 #[derive(SystemSet, Hash, PartialEq, Eq, Debug, Clone)]
 pub struct PreloadSystems;
 
-#[derive(EntityEvent)]
-pub struct AssetsLoaded(pub Entity);
-
 #[derive(Component, Default, Clone)]
-#[require(LoadingAssets, LoadedAssets)]
-pub struct AssetManifest(pub Vec<&'static str>);
+#[require(PreloadState, PreloadingAssets, PreloadedAssets)]
+pub struct PreloadManifest(pub Vec<&'static str>);
+
+#[derive(Component, Default, Clone, Copy, PartialEq, Eq)]
+pub enum PreloadState {
+    #[default]
+    NotStarted,
+    Loading,
+    Loaded,
+}
 
 #[derive(Component, Default)]
-struct LoadingAssets(Vec<Handle<LoadedUntypedAsset>>);
+struct PreloadingAssets(Vec<Handle<LoadedUntypedAsset>>);
 
-impl FromTemplate for LoadingAssets {
-    type Template = LoadingAssetsTemplate;
+impl FromTemplate for PreloadingAssets {
+    type Template = PreloadingAssetsTemplate;
 }
 
 #[derive(Default)]
-struct LoadingAssetsTemplate;
+struct PreloadingAssetsTemplate;
 
-impl Template for LoadingAssetsTemplate {
-    type Output = LoadingAssets;
+impl Template for PreloadingAssetsTemplate {
+    type Output = PreloadingAssets;
 
     fn build_template(&self, _: &mut TemplateContext) -> Result<Self::Output> {
-        Ok(LoadingAssets::default())
+        Ok(PreloadingAssets::default())
     }
 
     fn clone_template(&self) -> Self {
@@ -88,4 +94,4 @@ impl Template for LoadingAssetsTemplate {
 }
 
 #[derive(Component, Default, Clone)]
-struct LoadedAssets(Vec<UntypedHandle>);
+struct PreloadedAssets(Vec<UntypedHandle>);

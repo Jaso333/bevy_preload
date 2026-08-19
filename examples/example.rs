@@ -10,14 +10,24 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(PreloadPlugin)
         .add_systems(Startup, game_assets_scene.spawn())
+        .add_systems(First, assets_loaded_system.after(PreloadSystems))
         .run();
 }
 
-fn assets_loaded_handler(
-    _: On<AssetsLoaded>,
+fn assets_loaded_system(
+    preload_query: Query<&PreloadState, Changed<PreloadState>>,
     asset_server: Res<AssetServer>,
     images: Res<Assets<Image>>,
 ) {
+    if preload_query.is_empty() {
+        return;
+    }
+
+    let state = preload_query.single().unwrap();
+    if state != &PreloadState::Loaded {
+        return;
+    }
+
     // won't fail because the assets are known to be loaded a this point
     let red_image = images.get(asset_server.load(RED_IMAGE_PATH).id()).unwrap();
     let green_image = images
@@ -36,7 +46,6 @@ fn assets_loaded_handler(
 
 fn game_assets_scene() -> impl Scene {
     bsn! {
-        AssetManifest(vec![RED_IMAGE_PATH, GREEN_IMAGE_PATH, BLUE_IMAGE_PATH])
-        on(assets_loaded_handler)
+        PreloadManifest(vec![RED_IMAGE_PATH, GREEN_IMAGE_PATH, BLUE_IMAGE_PATH])
     }
 }
