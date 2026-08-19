@@ -1,5 +1,9 @@
 use bevy::{asset::LoadedUntypedAsset, ecs::template::TemplateContext, prelude::*};
 
+pub mod prelude {
+    pub use crate::{AssetManifest, AssetsLoaded, PreloadPlugin, PreloadSystems};
+}
+
 pub struct PreloadPlugin;
 
 impl Plugin for PreloadPlugin {
@@ -48,14 +52,6 @@ fn preload_system(
     }
 }
 
-pub fn preload_scene() -> impl Scene {
-    bsn! {
-        AssetManifest
-        LoadingAssets
-        LoadedAssets
-    }
-}
-
 #[derive(SystemSet, Hash, PartialEq, Eq, Debug, Clone)]
 pub struct PreloadSystems;
 
@@ -63,17 +59,18 @@ pub struct PreloadSystems;
 pub struct AssetsLoaded(pub Entity);
 
 #[derive(Component, Default, Clone)]
+#[require(LoadingAssets, LoadedAssets)]
 pub struct AssetManifest(pub Vec<&'static str>);
 
 #[derive(Component, Default)]
-pub struct LoadingAssets(Vec<Handle<LoadedUntypedAsset>>);
+struct LoadingAssets(Vec<Handle<LoadedUntypedAsset>>);
 
 impl FromTemplate for LoadingAssets {
     type Template = LoadingAssetsTemplate;
 }
 
 #[derive(Default)]
-pub struct LoadingAssetsTemplate;
+struct LoadingAssetsTemplate;
 
 impl Template for LoadingAssetsTemplate {
     type Output = LoadingAssets;
@@ -88,4 +85,4 @@ impl Template for LoadingAssetsTemplate {
 }
 
 #[derive(Component, Default, Clone)]
-pub struct LoadedAssets(Vec<UntypedHandle>);
+struct LoadedAssets(Vec<UntypedHandle>);

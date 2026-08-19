@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_preload::{AssetManifest, AssetsLoaded, PreloadPlugin, preload_scene};
+use bevy_preload::prelude::*;
 
 const RED_IMAGE_PATH: &str = "red.png";
 const GREEN_IMAGE_PATH: &str = "green.png";
@@ -36,7 +36,6 @@ fn assets_loaded_handler(
 
 fn game_assets_scene() -> impl Scene {
     bsn! {
-        preload_scene()
         AssetManifest(vec![RED_IMAGE_PATH, GREEN_IMAGE_PATH, BLUE_IMAGE_PATH])
         on(assets_loaded_handler)
     }
