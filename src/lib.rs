@@ -8,7 +8,10 @@ pub struct PreloadPlugin;
 
 impl Plugin for PreloadPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PreUpdate, preload_system.in_set(PreloadSystems));
+        // Use "First" schedule as the app is likely to start mass-spawning entities when the preload completes.
+        // This also supports the nature of the plugin: *pre*-loading before anything happens.
+        // Apps would typically consider this point to be the "true" startup point, like the "Startup" schedule.
+        app.add_systems(First, preload_system.in_set(PreloadSystems));
     }
 }
 
