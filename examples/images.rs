@@ -5,17 +5,29 @@ const RED_IMAGE_PATH: &str = "red.png";
 const GREEN_IMAGE_PATH: &str = "green.png";
 const BLUE_IMAGE_PATH: &str = "blue.png";
 
+fn game_assets_scene() -> impl Scene {
+    bsn! {
+        PreloadManifest(vec![RED_IMAGE_PATH, GREEN_IMAGE_PATH, BLUE_IMAGE_PATH])
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(PreloadPlugin)
         .add_systems(Startup, game_assets_scene.spawn())
-        .add_systems(First, assets_loaded_system.after(PreloadSystems))
+        .add_systems(First, await_completion.after(PreloadSystems))
         .run();
 }
 
-fn assets_loaded_system(
-    preload_query: Query<&PreloadState, Changed<PreloadState>>,
+fn await_completion(
+    preload_query: Query<
+        (),
+        (
+            Changed<PreloadedAssetHandles>,
+            Without<PreloadingAssetHandles>,
+        ),
+    >,
     asset_server: Res<AssetServer>,
     images: Res<Assets<Image>>,
 ) {
@@ -23,10 +35,7 @@ fn assets_loaded_system(
         return;
     }
 
-    let state = preload_query.single().unwrap();
-    if state != &PreloadState::Loaded {
-        return;
-    }
+    info!("Loaded assets!");
 
     // won't fail because the assets are known to be loaded a this point
     let red_image = images.get(asset_server.load(RED_IMAGE_PATH).id()).unwrap();
@@ -42,10 +51,4 @@ fn assets_loaded_system(
     println!("red is {red_color:?}");
     println!("green is {green_color:?}");
     println!("blue is {blue_color:?}");
-}
-
-fn game_assets_scene() -> impl Scene {
-    bsn! {
-        PreloadManifest(vec![RED_IMAGE_PATH, GREEN_IMAGE_PATH, BLUE_IMAGE_PATH])
-    }
 }
