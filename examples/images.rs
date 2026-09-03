@@ -21,17 +21,14 @@ fn main() {
 }
 
 fn await_completion(
-    preload_query: Query<
-        (),
-        (
-            Changed<PreloadedAssetHandles>,
-            Without<PreloadingAssetHandles>,
-        ),
-    >,
+    preload_query: Query<&PreloadState, Changed<PreloadState>>,
     asset_server: Res<AssetServer>,
     images: Res<Assets<Image>>,
 ) {
-    if preload_query.is_empty() {
+    if !preload_query
+        .single()
+        .is_ok_and(|state| state == &PreloadState::Loaded)
+    {
         return;
     }
 
