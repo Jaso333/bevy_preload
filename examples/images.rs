@@ -7,7 +7,7 @@ const BLUE_IMAGE_PATH: &str = "blue.png";
 
 fn game_assets_scene() -> impl Scene {
     bsn! {
-        PreloadManifest(vec![RED_IMAGE_PATH, GREEN_IMAGE_PATH, BLUE_IMAGE_PATH])
+        PreloadAssetsManifest(vec![RED_IMAGE_PATH, GREEN_IMAGE_PATH, BLUE_IMAGE_PATH])
     }
 }
 
