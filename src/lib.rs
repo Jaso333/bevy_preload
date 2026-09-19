@@ -5,126 +5,105 @@ use bevy::{
 };
 
 pub mod prelude {
-    pub use crate::{
-        PreloadAssetsComplete, PreloadAssetsIncomplete, PreloadAssetsManifest, PreloadPlugin,
-        PreloadState, PreloadSystems,
-    };
+    pub use crate::*;
 }
 
-/// The set that contains all preload systems within the assigned schedule.
-#[derive(SystemSet, Hash, PartialEq, Eq, Debug, Clone)]
+/// The number of frames to wait for the pipeline count to settle on zero.
+const PIPELINE_COUNT_SETTLE_FRAME_COUNT: u32 = 5;
+
+/// The set that contains the systems in this module.
+#[derive(SystemSet, Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct PreloadSystems;
 
-/// Contains the list of assets to preload. Spawn this to initiate preloading of the identified assets.
-#[derive(Component, Default, Clone)]
-#[require(
-    PreloadAssetsIncomplete,
-    PreloadAssetsComplete,
-    PreloadPipelinesTimer,
-    PreloadPipelinesCount,
-    PreloadState
-)]
-pub struct PreloadAssetsManifest(pub Vec<&'static str>);
-
-/// The assets that are currently preloading. This is required by the manifest.
-#[derive(Component, Default)]
-pub struct PreloadAssetsIncomplete(pub Vec<Handle<LoadedUntypedAsset>>);
-
-/// The assets that have preloaded. This ensures that the assets are always pinned and therefore never dropped.
-/// This is required by the manifest.
-#[derive(Component, Default, Clone)]
-pub struct PreloadAssetsComplete(pub Vec<UntypedHandle>);
-
-/// The timer used to be sure that pipelines have loaded.
-/// This is due to the fact that the preload count can drop to zero temporarily before pushing more to the queue.
-#[derive(Component, Clone)]
-pub struct PreloadPipelinesTimer(pub Timer);
-
-impl Default for PreloadPipelinesTimer {
-    fn default() -> Self {
-        Self(Timer::from_seconds(0.1, TimerMode::Once))
-    }
+/// The data representing the loading state of pipelines.
+#[derive(Resource, Default)]
+struct PipelinePreloadData {
+    /// The number of frames that the waiting count has been 0 for.
+    frame_count: u32,
 }
 
-/// Records the number of pipelines currently being loaded.
+/// A manifest of assets to preload.
 #[derive(Component, Default, Clone)]
-pub struct PreloadPipelinesCount(pub usize);
-
-/// The state being tracked from when the manifest is propagated.
-#[derive(Component, Default, Clone, Copy, PartialEq, Eq)]
-pub enum PreloadState {
-    #[default]
-    Loading,
-    Loaded,
+pub struct AssetPreloadManifest {
+    /// The paths of the assets to load.
+    pub paths: Vec<&'static str>,
 }
 
-/// Adds preload functionality to the app.
+/// The internal state of the asset preloader.
+#[derive(Component, Default, Clone)]
+struct AssetPreloadHandles {
+    /// The assets still loading.
+    loading: Vec<Handle<LoadedUntypedAsset>>,
+    /// The assets that have loaded.
+    loaded: Vec<UntypedHandle>,
+}
+
+/// The general internal state for any preload operation.
+/// This effectively forms the join between asset and pipeline loads.
+#[derive(Component, Default, Clone)]
+struct PreloadJoin {
+    /// Flags if the entire preload is complete.
+    is_finished: bool,
+}
+
+/// The event that signals when a preload has finished.
+#[derive(EntityEvent)]
+pub struct PreloadFinished {
+    /// The entity containing the preload data.
+    pub entity: Entity,
+}
+
+/// Adds the ability to preload assets and be notified of when they are complete.
+/// The notification of which includes some confidence that all pipelines are also ready.
 pub struct PreloadPlugin;
 
 impl Plugin for PreloadPlugin {
     fn build(&self, app: &mut App) {
-        // Use "First" schedule as the app is likely to start mass-spawning entities when the preload completes.
-        // This also supports the nature of the plugin: *pre*-loading before anything happens.
-        // Apps would typically consider this point to be the "true" startup point, like the "Startup" schedule.
-        app.add_systems(First, check_loaded.in_set(PreloadSystems))
-            .add_systems(
-                First,
-                (propagate_manifests, update_handles)
-                    .chain()
-                    .before(check_loaded)
-                    .in_set(PreloadSystems),
-            )
-            .add_systems(
-                First,
-                update_pipelines_timer
-                    .before(check_loaded)
-                    .in_set(PreloadSystems),
-            );
+        app.init_resource::<PipelinePreloadData>().add_systems(
+            Update,
+            (start_loading_assets, update_assets, finish_preload)
+                .chain()
+                .in_set(PreloadSystems),
+        );
 
         app.sub_app_mut(RenderApp).add_systems(
             ExtractSchedule,
-            update_pipelines_count.in_set(PreloadSystems),
+            update_pipeline_preload_data.in_set(PreloadSystems),
         );
     }
 }
 
-/// Ingests the latest manifest when it has changed, kicking off the loading of each asset.
-fn propagate_manifests(
-    mut manifest_query: Query<
-        (
-            &PreloadAssetsManifest,
-            &mut PreloadAssetsIncomplete,
-            &mut PreloadAssetsComplete,
-            &mut PreloadState,
-        ),
-        Changed<PreloadAssetsManifest>,
-    >,
+/// Starts loading assets when the asset preloader has changed.
+fn start_loading_assets(
+    manifest_query: Query<(Entity, &AssetPreloadManifest), Changed<AssetPreloadManifest>>,
     asset_server: Res<AssetServer>,
+    mut commands: Commands,
 ) {
-    for (manifest, mut incomplete, mut complete, mut state) in manifest_query.iter_mut() {
-        // a new manifest resets everything
-        incomplete.0 = manifest
-            .0
+    for (entity, manifest) in manifest_query.iter() {
+        let loading = manifest
+            .paths
             .iter()
             .map(|path| asset_server.load_builder().load_untyped(*path))
             .collect();
 
-        // clear the previous preloaded assets as they no longer represent the manifest
-        complete.0.clear();
-
-        // reset the state
-        *state = PreloadState::Loading;
+        commands.entity(entity).insert((
+            AssetPreloadHandles {
+                loading,
+                ..default()
+            },
+            PreloadJoin::default(),
+        ));
     }
 }
 
-/// Updates the loading and loaded handles based on if they are loaded.
-fn update_handles(
-    mut handle_query: Query<(&mut PreloadAssetsIncomplete, &mut PreloadAssetsComplete)>,
+/// Updates the assets in an asset preloader.
+fn update_assets(
+    mut handles_query: Query<&mut AssetPreloadHandles>,
     loaded_untyped_assets: Res<Assets<LoadedUntypedAsset>>,
 ) {
-    for (mut incomplete, mut complete) in handle_query.iter_mut() {
+    for mut handles in handles_query.iter_mut() {
         let mut new_loaded = Vec::new();
-        incomplete.0.retain(|handle| {
+        handles.loading.retain(|handle| {
             if let Some(asset) = loaded_untyped_assets.get(handle.id()) {
                 new_loaded.push(asset.handle.clone());
                 return false;
@@ -132,53 +111,36 @@ fn update_handles(
             true
         });
 
-        complete.0.append(&mut new_loaded);
+        handles.loaded.append(&mut new_loaded);
     }
 }
 
-/// Checks for the condition for when the assets are loaded.
-fn check_loaded(
-    mut state_query: Query<(
-        &mut PreloadState,
-        &PreloadAssetsIncomplete,
-        &PreloadPipelinesTimer,
-    )>,
-) {
-    for (mut state, incomplete, timer) in state_query.iter_mut() {
-        if state.as_ref() == &PreloadState::Loaded
-            || !incomplete.0.is_empty()
-            || !timer.0.is_finished()
-        {
-            continue;
+/// Gets waiting pipeline information from the render world during extract.
+fn update_pipeline_preload_data(mut main_world: ResMut<MainWorld>, cache: Res<PipelineCache>) {
+    let mut preloader = main_world.resource_mut::<PipelinePreloadData>();
+
+    if cache.waiting_pipelines().count() == 0 {
+        if preloader.frame_count < PIPELINE_COUNT_SETTLE_FRAME_COUNT {
+            preloader.frame_count += 1;
         }
-
-        *state = PreloadState::Loaded;
+    } else {
+        preloader.frame_count = 0;
     }
 }
 
-/// During extraction, log the number of pipelines waiting in the cache.
-fn update_pipelines_count(mut main_world: ResMut<MainWorld>, cache: Res<PipelineCache>) {
-    let mut query = main_world.query::<&mut PreloadPipelinesCount>();
-
-    for mut count in query.iter_mut(&mut main_world) {
-        count.0 = cache.waiting_pipelines().count();
-    }
-}
-
-/// Updates the timer for confirming pipelines have finished loading.
-fn update_pipelines_timer(
-    mut preload_query: Query<(&PreloadPipelinesCount, &mut PreloadPipelinesTimer)>,
-    time: Res<Time<Real>>,
+/// Checks the conditions for finishing the preload and marks it as such.
+fn finish_preload(
+    mut preload_query: Query<(Entity, &AssetPreloadHandles, &mut PreloadJoin)>,
+    pipeline_preloader: Res<PipelinePreloadData>,
+    mut commands: Commands,
 ) {
-    for (count, mut timer) in preload_query.iter_mut() {
-        if count.0 == 0 {
-            if timer.0.is_finished() {
-                continue;
-            }
-
-            timer.0.tick(time.delta());
-        } else {
-            timer.0.reset();
+    for (entity, asset_preloader, mut preloader) in preload_query.iter_mut() {
+        if !preloader.is_finished
+            && asset_preloader.loading.len() == 0
+            && pipeline_preloader.frame_count >= PIPELINE_COUNT_SETTLE_FRAME_COUNT
+        {
+            preloader.is_finished = true;
+            commands.trigger(PreloadFinished { entity });
         }
     }
 }
