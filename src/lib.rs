@@ -48,6 +48,7 @@ impl Plugin for PreloadPlugin {
         app.init_resource::<PreloadState>();
 
         app.init_schedule(PreloadCheck);
+        app.init_schedule(PreloadedStartup);
 
         app.world_mut()
             .resource_mut::<MainScheduleOrder>()
