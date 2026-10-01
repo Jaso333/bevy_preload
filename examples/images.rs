@@ -43,15 +43,13 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(PreloadPlugin)
-        .preload_assets(vec![RED_IMAGE_PATH, GREEN_IMAGE_PATH, BLUE_IMAGE_PATH])
+        .preload_assets([RED_IMAGE_PATH, GREEN_IMAGE_PATH, BLUE_IMAGE_PATH])
         .add_systems(PreloadedStartup, startup)
         .add_systems(Update, rotate_squares)
         .run();
 }
 
 fn startup(mut commands: Commands) {
-    info!("loaded assets!");
-
     commands.spawn_scene_list(game());
 }
 

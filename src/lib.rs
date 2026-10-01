@@ -54,15 +54,15 @@ impl Plugin for PreloadPlugin {
 /// Adds preloading options to app building.
 pub trait PreloadAppExt {
     /// Adds a list of asset paths to preload.
-    fn preload_assets(&mut self, paths: Vec<&'static str>) -> &mut Self;
+    fn preload_assets(&mut self, paths: impl Into<Vec<&'static str>>) -> &mut Self;
 }
 
 impl PreloadAppExt for App {
-    fn preload_assets(&mut self, mut paths: Vec<&'static str>) -> &mut Self {
+    fn preload_assets(&mut self, paths: impl Into<Vec<&'static str>>) -> &mut Self {
         self.world_mut()
             .resource_mut::<PreloadState>()
             .paths
-            .append(&mut paths);
+            .append(&mut paths.into());
 
         self
     }
