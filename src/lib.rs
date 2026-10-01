@@ -106,6 +106,7 @@ fn check_completion(mut state: ResMut<PreloadState>, mut commands: Commands) {
 
     if state.paths.is_empty() && state.loading.is_empty() {
         state.started = true;
+        info!("preloaded {} assets", state.loaded.len());
         commands.run_schedule(PreloadedStartup);
     }
 }
