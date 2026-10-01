@@ -10,8 +10,8 @@ pub mod prelude {
     pub use crate::*;
 }
 
-/// The maximum number of frames to wait for pipelines.
-const MAX_FRAME_COUNT: usize = 5;
+/// How long to wait until the pipeline count has settled.
+const SETTLE_TIME: f32 = 0.5;
 
 /// The startup schedule to run after everything has preloaded.
 #[derive(ScheduleLabel, Hash, Debug, PartialEq, Eq, Clone)]
@@ -26,7 +26,7 @@ struct PreloadCheck;
 pub struct PreloadSystems;
 
 /// The overall state of the preload functionality.
-#[derive(Resource, Default, Debug)]
+#[derive(Resource, Debug)]
 struct PreloadState {
     /// The paths of the assets to load.
     paths: Vec<&'static str>,
@@ -34,10 +34,22 @@ struct PreloadState {
     loading: Vec<Handle<LoadedUntypedAsset>>,
     /// The assets that have loaded.
     loaded: Vec<UntypedHandle>,
-    /// The number of frames passed whilst the waiting pipeline count is zero.
-    frame_count: usize,
+    /// Times how long its been since the pipeline count hit zero.
+    timer: Timer,
     /// Flags when the app has started, so it doesn't occur more than once.
     started: bool,
+}
+
+impl Default for PreloadState {
+    fn default() -> Self {
+        Self {
+            paths: default(),
+            loading: default(),
+            loaded: default(),
+            timer: Timer::from_seconds(SETTLE_TIME, TimerMode::Once),
+            started: default(),
+        }
+    }
 }
 
 /// Adds preload functionality to the app.
@@ -83,7 +95,11 @@ impl PreloadAppExt for App {
 }
 
 /// During extract, checks the waiting pipeline count.
-fn check_waiting_pipelines(mut main_world: ResMut<MainWorld>, cache: Res<PipelineCache>) {
+fn check_waiting_pipelines(
+    mut main_world: ResMut<MainWorld>,
+    cache: Res<PipelineCache>,
+    time: Res<Time>,
+) {
     let mut state = main_world.resource_mut::<PreloadState>();
 
     if state.started {
@@ -91,11 +107,9 @@ fn check_waiting_pipelines(mut main_world: ResMut<MainWorld>, cache: Res<Pipelin
     }
 
     if cache.waiting_pipelines().count() == 0 {
-        if state.frame_count < MAX_FRAME_COUNT {
-            state.frame_count += 1;
-        }
+        state.timer.tick(time.delta());
     } else {
-        state.frame_count = 0;
+        state.timer.reset();
     }
 }
 
@@ -135,7 +149,7 @@ fn check_completion(mut state: ResMut<PreloadState>, mut commands: Commands) {
         return;
     }
 
-    if state.frame_count >= MAX_FRAME_COUNT && state.paths.is_empty() && state.loading.is_empty() {
+    if state.timer.is_finished() && state.paths.is_empty() && state.loading.is_empty() {
         state.started = true;
         commands.run_schedule(PreloadedStartup);
     }
