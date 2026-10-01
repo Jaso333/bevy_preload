@@ -1,17 +1,10 @@
 use bevy::{
-    app::MainScheduleOrder,
-    asset::LoadedUntypedAsset,
-    ecs::schedule::ScheduleLabel,
-    prelude::*,
-    render::{MainWorld, RenderApp, render_resource::PipelineCache},
+    app::MainScheduleOrder, asset::LoadedUntypedAsset, ecs::schedule::ScheduleLabel, prelude::*,
 };
 
 pub mod prelude {
     pub use crate::*;
 }
-
-/// How long to wait until the pipeline count has settled.
-const SETTLE_TIME: f32 = 0.5;
 
 /// The startup schedule to run after everything has preloaded.
 #[derive(ScheduleLabel, Hash, Debug, PartialEq, Eq, Clone)]
@@ -26,7 +19,7 @@ struct PreloadCheck;
 pub struct PreloadSystems;
 
 /// The overall state of the preload functionality.
-#[derive(Resource, Debug)]
+#[derive(Resource, Default, Debug)]
 struct PreloadState {
     /// The paths of the assets to load.
     paths: Vec<&'static str>,
@@ -34,22 +27,8 @@ struct PreloadState {
     loading: Vec<Handle<LoadedUntypedAsset>>,
     /// The assets that have loaded.
     loaded: Vec<UntypedHandle>,
-    /// Times how long its been since the pipeline count hit zero.
-    timer: Timer,
     /// Flags when the app has started, so it doesn't occur more than once.
     started: bool,
-}
-
-impl Default for PreloadState {
-    fn default() -> Self {
-        Self {
-            paths: default(),
-            loading: default(),
-            loaded: default(),
-            timer: Timer::from_seconds(SETTLE_TIME, TimerMode::Once),
-            started: default(),
-        }
-    }
 }
 
 /// Adds preload functionality to the app.
@@ -65,11 +44,6 @@ impl Plugin for PreloadPlugin {
         app.world_mut()
             .resource_mut::<MainScheduleOrder>()
             .insert_before(First, PreloadCheck);
-
-        app.sub_app_mut(RenderApp).add_systems(
-            ExtractSchedule,
-            check_waiting_pipelines.in_set(PreloadSystems),
-        );
 
         app.add_systems(Update, update_assets.in_set(PreloadSystems));
 
@@ -91,25 +65,6 @@ impl PreloadAppExt for App {
             .append(&mut paths);
 
         self
-    }
-}
-
-/// During extract, checks the waiting pipeline count.
-fn check_waiting_pipelines(
-    mut main_world: ResMut<MainWorld>,
-    cache: Res<PipelineCache>,
-    time: Res<Time>,
-) {
-    let mut state = main_world.resource_mut::<PreloadState>();
-
-    if state.started {
-        return;
-    }
-
-    if cache.waiting_pipelines().count() == 0 {
-        state.timer.tick(time.delta());
-    } else {
-        state.timer.reset();
     }
 }
 
@@ -149,7 +104,7 @@ fn check_completion(mut state: ResMut<PreloadState>, mut commands: Commands) {
         return;
     }
 
-    if state.timer.is_finished() && state.paths.is_empty() && state.loading.is_empty() {
+    if state.paths.is_empty() && state.loading.is_empty() {
         state.started = true;
         commands.run_schedule(PreloadedStartup);
     }
