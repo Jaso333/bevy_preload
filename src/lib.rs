@@ -22,7 +22,7 @@ pub struct PreloadSystems;
 #[derive(Resource, Default, Debug)]
 struct PreloadState {
     /// The paths of the assets to load.
-    paths: Vec<&'static str>,
+    paths: Vec<String>,
     /// The assets still loading.
     loading: Vec<Handle<LoadedUntypedAsset>>,
     /// The assets that have loaded.
@@ -54,15 +54,24 @@ impl Plugin for PreloadPlugin {
 /// Adds preloading options to app building.
 pub trait PreloadAppExt {
     /// Adds a list of asset paths to preload.
-    fn preload_assets(&mut self, paths: impl Into<Vec<&'static str>>) -> &mut Self;
+    fn preload_assets<I>(&mut self, paths: I) -> &mut Self
+    where
+        I: IntoIterator,
+        I::Item: Into<String>;
 }
 
 impl PreloadAppExt for App {
-    fn preload_assets(&mut self, paths: impl Into<Vec<&'static str>>) -> &mut Self {
+    fn preload_assets<I>(&mut self, paths: I) -> &mut Self
+    where
+        I: IntoIterator,
+        I::Item: Into<String>,
+    {
+        let mut paths = paths.into_iter().map(Into::into).collect();
+
         self.world_mut()
             .resource_mut::<PreloadState>()
             .paths
-            .append(&mut paths.into());
+            .append(&mut paths);
 
         self
     }
