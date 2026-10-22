@@ -2,6 +2,11 @@
 name = "bevy_preload"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "A library for preloading assets in the Bevy game engine."
+repository = "https://github.com/Jaso333/bevy_preload"
+readme = "README.md"
+keywords = ["bevy", "preload", "assets"]
 
 [dependencies]
 bevy_app = { version = "0.20", default-features = false }
