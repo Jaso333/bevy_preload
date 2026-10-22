@@ -4,4 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.20.0", features = ["debug"] }
+bevy_app = { version = "0.20", default-features = false }
+bevy_ecs = { version = "0.20", default-features = false }
+bevy_asset = { version = "0.20", default-features = false }
+bevy_log = { version = "0.20", default-features = false }
+
+[dev-dependencies]
+bevy = { version = "0.20" }

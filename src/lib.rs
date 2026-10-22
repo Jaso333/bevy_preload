@@ -1,121 +1,136 @@
-use bevy::{
-    app::MainScheduleOrder, asset::LoadedUntypedAsset, ecs::schedule::ScheduleLabel, prelude::*,
-};
+use bevy_app::prelude::*;
+use bevy_asset::{LoadedUntypedAsset, prelude::*};
+use bevy_ecs::{prelude::*, template::TemplateContext};
+use bevy_log::prelude::*;
 
-pub mod prelude {
-    pub use crate::*;
-}
-
-/// The startup schedule to run after everything has preloaded.
-#[derive(ScheduleLabel, Hash, Debug, PartialEq, Eq, Clone)]
-pub struct PreloadedStartup;
-
-/// Happens before [`First`] so that [`PreloadedStartup`] is effectively the same as [`Startup`] in terms of organisation.
-#[derive(ScheduleLabel, Hash, Debug, PartialEq, Eq, Clone)]
-struct PreloadCheck;
-
-/// Contains all systems in this module.
-#[derive(SystemSet, Hash, Clone, Debug, PartialEq, Eq)]
-pub struct PreloadSystems;
-
-/// The overall state of the preload functionality.
-#[derive(Resource, Default, Debug)]
-struct PreloadState {
-    /// The paths of the assets to load.
-    paths: Vec<String>,
-    /// The assets still loading.
-    loading: Vec<Handle<LoadedUntypedAsset>>,
-    /// The assets that have loaded.
-    loaded: Vec<UntypedHandle>,
-    /// Flags when the app has started, so it doesn't occur more than once.
-    started: bool,
-}
-
-/// Adds preload functionality to the app.
+/// Provides general-use "preload" functionality.
+///
+/// Use the [`Preload`] component to specify a list of asset paths to load and be notified on completion.
+///
+/// The [`PreloadComplete`] event is triggered when the preload is complete.
 pub struct PreloadPlugin;
 
 impl Plugin for PreloadPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PreloadState>();
+        // preloading starts at the end of the frame, giving the opportunity to run logic in update for filling the paths
+        app.add_systems(PostUpdate, begin_loading.in_set(PreloadSystems));
 
-        app.init_schedule(PreloadCheck);
-        app.init_schedule(PreloadedStartup);
-
-        app.world_mut()
-            .resource_mut::<MainScheduleOrder>()
-            .insert_before(First, PreloadCheck);
-
-        app.add_systems(Update, update_assets.in_set(PreloadSystems));
-
-        app.add_systems(PreloadCheck, check_completion);
+        // completion happens at the start of the frame, allowing event handlers to spawn things before `Update`
+        app.add_systems(PreUpdate, end_loading.in_set(PreloadSystems));
     }
 }
 
-/// Adds preloading options to app building.
-pub trait PreloadAppExt {
-    /// Adds a list of asset paths to preload.
-    fn preload_assets<I>(&mut self, paths: I) -> &mut Self
-    where
-        I: IntoIterator,
-        I::Item: Into<String>;
+/// The set used for systems in this library.
+#[derive(SystemSet, PartialEq, Eq, Hash, Clone, Debug)]
+pub struct PreloadSystems;
+
+/// Triggered on a [`Preload`] entity when loading is complete.
+#[derive(EntityEvent)]
+pub struct PreloadComplete {
+    /// The entity containing the assets that have loaded.
+    pub entity: Entity,
 }
 
-impl PreloadAppExt for App {
-    fn preload_assets<I>(&mut self, paths: I) -> &mut Self
+/// Specifies the assets to load and contains the loaded assets.
+///
+/// This component ensures that the loaded assets are not unloaded by holding reference to them.
+///
+/// This component acts as a "hopper" of sorts, where paths are fed in and eventually the equivalent handles are loaded.
+/// Because of this, it is up to the user to control and limit the times that paths are added,
+/// as the [`PreloadComplete`] event is triggered every time the [`Preload::loading`] field is emptied.
+///
+/// A typical use for a simple game would be to throw all possible asset paths into this component on [`Startup`] and then begin the game upon completion.
+#[derive(Component, Default)]
+pub struct Preload {
+    /// The paths to consume in the next execution of the system.
+    /// These are converted to handles in the [`Preload::loading`] field.
+    pub paths: Vec<String>,
+    /// The handles currently that are currently loading.
+    /// These are consumed and converted to handles in the [`Preload::loaded`] when loaded.
+    pub loading: Vec<Handle<LoadedUntypedAsset>>,
+    /// The loaded handles. These pin the assets, ensuring that are not unloaded for as long as this component exists.
+    pub loaded: Vec<UntypedHandle>,
+}
+
+impl Preload {
+    /// Convenience constructor for generating the component from an iterator of paths.
+    pub fn from_paths<I>(paths: I) -> Self
     where
         I: IntoIterator,
         I::Item: Into<String>,
     {
-        let mut paths = paths.into_iter().map(Into::into).collect();
-
-        self.world_mut()
-            .resource_mut::<PreloadState>()
-            .paths
-            .append(&mut paths);
-
-        self
-    }
-}
-
-/// Updates the asset loading part of the preload.
-fn update_assets(
-    mut state: ResMut<PreloadState>,
-    asset_server: Res<AssetServer>,
-    assets: Res<Assets<LoadedUntypedAsset>>,
-) {
-    if state.started {
-        return;
-    }
-
-    let mut new_loading = state
-        .paths
-        .drain(..)
-        .map(|path| asset_server.load_builder().load_untyped(path))
-        .collect();
-
-    state.loading.append(&mut new_loading);
-
-    let mut new_loaded = Vec::new();
-    state.loading.retain(|handle| {
-        if let Some(asset) = assets.get(handle.id()) {
-            new_loaded.push(asset.handle.clone());
-            return false;
+        Self {
+            paths: paths.into_iter().map(Into::into).collect(),
+            ..Default::default()
         }
-        true
-    });
-
-    state.loaded.append(&mut new_loaded);
+    }
 }
 
-/// Checks the state for completion.
-fn check_completion(mut state: ResMut<PreloadState>, mut commands: Commands) {
-    if state.started {
-        return;
+/// This is necessary due to the [`Preload::loading`] field in this component, unfortunately.
+impl FromTemplate for Preload {
+    type Template = Self;
+}
+
+impl Template for Preload {
+    type Output = Self;
+
+    fn build_template(&self, _: &mut TemplateContext) -> Result<Self::Output> {
+        Ok(Self::clone_template(self))
     }
 
-    if state.paths.is_empty() && state.loading.is_empty() {
-        state.started = true;
-        info!("preloaded {} assets", state.loaded.len());
-        commands.run_schedule(PreloadedStartup);
+    fn clone_template(&self) -> Self {
+        Self {
+            paths: self.paths.clone(),
+            loading: self.loading.clone(),
+            loaded: self.loaded.clone(),
+        }
+    }
+}
+
+/// Begins loading any paths currently present in the [`Preload`] components.
+fn begin_loading(mut preload_query: Query<&mut Preload>, asset_server: Res<AssetServer>) {
+    for mut preload in preload_query.iter_mut() {
+        let mut loading = preload
+            .paths
+            .drain(..)
+            .map(|path| asset_server.load_builder().load_untyped(path))
+            .collect::<Vec<_>>();
+
+        preload.loading.append(&mut loading);
+    }
+}
+
+/// Ends the loading of any handles currently in the loading state.
+fn end_loading(
+    mut preload_query: Query<(Entity, &mut Preload)>,
+    assets: Res<Assets<LoadedUntypedAsset>>,
+    mut commands: Commands,
+) {
+    for (entity, mut preload) in preload_query.iter_mut() {
+        if preload.loading.is_empty() {
+            continue;
+        }
+
+        // collect the loaded handles
+        let mut loaded = Vec::new();
+        preload.loading.retain(|handle| {
+            if let Some(asset) = assets.get(handle.id()) {
+                loaded.push(asset.handle.clone());
+                return false;
+            }
+
+            true
+        });
+
+        preload.loaded.append(&mut loaded);
+
+        // some loading completed and there is none left, so we can trigger the event
+        if preload.loading.is_empty() {
+            info!(
+                "preloading complete, {} assets available",
+                preload.loaded.len()
+            );
+            commands.trigger(PreloadComplete { entity });
+        }
     }
 }
